@@ -18,10 +18,10 @@
 ; the download file must incorporate a valid CRC-14 for the bootloader to consider it valid
 ;
 ; Bootloader is entered if:
-; - the MCLR/RA3 pin is grounded at power-up or reset,
-; (The internal pull-up is used; no external resistor is necessary.)
 ; - there is no valid application programmed,
-; - the watchdog timed out
+; - (optional) the MCLR/RA3 pin is grounded at power-up or reset (The internal pull-up is used; no external resistor is necessary.)
+; - (optional) the watchdog timed out
+; - (optional) reset instruction was executed
 ;
 ; A pre-computed CRC-14 at 0x1F7F confirms a valid application.
 ;
@@ -50,7 +50,7 @@
 
 	radix dec
 	list n=0,st=off
-	include "p16f1454.inc"
+        include PIC_HEADER
 	nolist
 	include "macros.inc"
 	include "bdt.inc"
@@ -59,27 +59,9 @@
 	list
 	errorlevel -302
 
-;;; Compile options
-; there is a genuine upside to a globally unique serial number (in a known memory location) programmed at the factory
-; however, for hobbyists compiling this code, it is highly problematic to ensure uniqueness
-; USB does not require serial numbers; their operational advantage is when resolving multiple devices plugged into the same computer
-; if multiple devices with the same serial number are inserted at the same time to a computer, problems may result
-; so, the operationally safe solution for this bootloader is to enable "HIDE_SERIAL_NUMBER" to prevent possible conflicts
-HIDE_SERIAL_NUMBER	equ	1
-
 ;;; Configuration
 	__config _CONFIG1, _FOSC_INTOSC & _WDTE_SWDTEN & _PWRTE_ON & _MCLRE_OFF & _CP_ON & _BOREN_ON & _IESO_OFF & _FCMEN_OFF
-	__config _CONFIG2, _WRT_BOOT & _CPUDIV_NOCLKDIV & _USBLSCLK_48MHz & _PLLMULT_3x & _PLLEN_ENABLED & _STVREN_ON & _BORV_LO & _LPBOR_OFF & _LVP_OFF
-
-;;; Constants and variable addresses
-	ifndef SERIAL_NUMBER
-	variable SERIAL_NUMBER=0	; Why doesnt 'equ' work here? Go figure
-	endif
-
-; If your organization has its own vendor ID/product ID, substitute it here.
-; the VID:PID for the DFU bootloader must be distinct from the product itself, as Windows insists on it
-USB_VENDOR_ID		equ	0x1209
-USB_PRODUCT_ID		equ	0x2002
+	__config _CONFIG2, _WRT_BOOT & _CPUDIV_NOCLKDIV & _USBLSCLK_48MHz & _PLLMULT_3x & _PLLEN_ENABLED & _STVREN_ON & _BORV_LO & _LPBOR_OFF & _DEBUG_OFF & _LVP_OFF
 
 SERIAL_NUMBER_DIGIT_CNT	equ	8	; length (in unicode characters) of string in SN descriptor
 DEVICE_DESC_LEN		equ	18	; device descriptor length
@@ -620,14 +602,24 @@ app_check_loop
 	tstf	CRCH
 	bnz	_bootloader_main
 
+#if OPT_BL_FROM_WATCHDOG
 ; do not run application if the watchdog timed out (providing a mechanism for the app to trigger a firmware update)
 	btfss	STATUS,NOT_TO
 	goto	_bootloader_main
+#endif
 
+#if OPT_BL_FROM_RESET_INST
+; do not run application if we detected a reset instruction execution
+	btfss	PCON,NOT_RI
+	goto	_bootloader_main
+#endif
+
+#if OPT_BL_FROM_RA3
 ; We have a valid application? Check if the entry pin is grounded
 	banksel	PORTA
 	btfss	PORTA,RA3
 	goto	_bootloader_main	; enter bootloader mode if input is low
+#endif
 
 ; We have a valid application and the entry pin is high. Start the application.
 	banksel	OPTION_REG
